@@ -55,7 +55,7 @@
 │  │                         CI/CD PIPELINE                                      ││
 │  │                                                                             ││
 │  │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐            ││
-│  │  │   GitHub Repo   │  │   GitLab CI     │  │   Ansible       │            ││
+│  │  │   GitLab Repo   │  │   GitLab CI     │  │   Ansible       │            ││
 │  │  │                 │  │                 │  │   Playbooks     │            ││
 │  │  │ kafka-cluster   │  │ Auto Deploy     │  │                 │            ││
 │  │  │ terraform/      │  │ Terraform       │  │ kafka.yml       │            ││
