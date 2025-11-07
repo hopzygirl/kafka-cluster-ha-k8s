@@ -1,7 +1,8 @@
-#Définition de la varaible "region"
+#Région AWS où sera déployer l'infrastructure
 variable "region" {
+  description = "Région AWS"
   type = string
-  default = "eu-west-1"
+  default = "eu-west-1" #Ireland
 }
 
 #Définition de la variable access_key pour AWS
