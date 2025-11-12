@@ -87,3 +87,14 @@ variable "allowed_ssh_cidr" {
   type        = string
   default     = "0.0.0.0/0"  # ⚠️ À remplacer par votre IP en production
 }
+
+#Variables pour les clés d'accès AWS
+
+variable "access_key" {
+  type = string
+}
+
+
+variable "secret_key" {
+  type = string
+}
