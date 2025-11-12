@@ -1,0 +1,178 @@
+name: Deploy Kafka Cluster
+
+# Déclencher manuellement ou sur push
+on:
+  workflow_dispatch:  # Permet de lancer manuellement depuis GitHub
+  push:
+    branches:
+      - main
+
+env:
+  AWS_REGION: eu-west-1
+  TF_VERSION: 1.5.7
+
+jobs:
+  # ============================================
+  # JOB 1 : Déployer l'infrastructure avec Terraform
+  # ============================================
+  deploy-infrastructure:
+    name: "1️⃣ Terraform - Créer les instances"
+    runs-on: ubuntu-latest
+    
+    outputs:
+      zk_public_ip: ${{ steps.tf_output.outputs.zk_public_ip }}
+      zk_private_ip: ${{ steps.tf_output.outputs.zk_private_ip }}
+      kafka_public_ip: ${{ steps.tf_output.outputs.kafka_public_ip }}
+      kafka_private_ip: ${{ steps.tf_output.outputs.kafka_private_ip }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Terraform Init
+        working-directory: ./terraform
+        run: terraform init
+
+      - name: Terraform Plan
+        working-directory: ./terraform
+        run: terraform plan
+
+      - name: Terraform Apply
+        working-directory: ./terraform
+        run: terraform apply -auto-approve
+
+      - name: Get Terraform Outputs
+        id: tf_output
+        working-directory: ./terraform
+        run: |
+          echo "zk_public_ip=$(terraform output -raw zookeeper_public_ips | jq -r '.[0]')" >> $GITHUB_OUTPUT
+          echo "zk_private_ip=$(terraform output -raw zookeeper_private_ips | jq -r '.[0]')" >> $GITHUB_OUTPUT
+          echo "kafka_public_ip=$(terraform output -raw kafka_broker_public_ips | jq -r '.[0]')" >> $GITHUB_OUTPUT
+          echo "kafka_private_ip=$(terraform output -raw kafka_broker_private_ips | jq -r '.[0]')" >> $GITHUB_OUTPUT
+
+      - name: Save SSH Key
+        working-directory: ./terraform
+        run: |
+          mkdir -p ~/.ssh
+          cp kafka-key.pem ~/.ssh/
+          chmod 400 ~/.ssh/kafka-key.pem
+
+      - name: Upload SSH Key
+        uses: actions/upload-artifact@v3
+        with:
+          name: ssh-key
+          path: ~/.ssh/kafka-key.pem
+
+  # ============================================
+  # JOB 2 : Installer ZooKeeper avec Ansible
+  # ============================================
+  deploy-zookeeper:
+    name: "2️⃣ Ansible - Installer ZooKeeper"
+    runs-on: ubuntu-latest
+    needs: deploy-infrastructure
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Download SSH Key
+        uses: actions/download-artifact@v3
+        with:
+          name: ssh-key
+          path: ~/.ssh/
+
+      - name: Fix SSH Key permissions
+        run: chmod 400 ~/.ssh/kafka-key.pem
+
+      - name: Install Ansible
+        run: |
+          sudo apt update
+          sudo apt install -y ansible
+
+      - name: Generate Ansible Inventory
+        working-directory: ./ansible
+        run: |
+          cat > inventory.ini <<EOF
+          [zookeeper]
+          zk1 ansible_host=${{ needs.deploy-infrastructure.outputs.zk_public_ip }} ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/kafka-key.pem
+
+          [kafka]
+          broker1 ansible_host=${{ needs.deploy-infrastructure.outputs.kafka_public_ip }} ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/kafka-key.pem
+
+          [all:vars]
+          ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+          zookeeper_private_ip=${{ needs.deploy-infrastructure.outputs.zk_private_ip }}
+          kafka_private_ip=${{ needs.deploy-infrastructure.outputs.kafka_private_ip }}
+          EOF
+
+      - name: Test SSH Connection
+        working-directory: ./ansible
+        run: ansible all -i inventory.ini -m ping
+
+      - name: Deploy ZooKeeper
+        working-directory: ./ansible
+        run: ansible-playbook -i inventory.ini install_zookeeper.yml
+
+  # ============================================
+  # JOB 3 : Installer Kafka avec Ansible
+  # ============================================
+  deploy-kafka:
+    name: "3️⃣ Ansible - Installer Kafka"
+    runs-on: ubuntu-latest
+    needs: [deploy-infrastructure, deploy-zookeeper]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Download SSH Key
+        uses: actions/download-artifact@v3
+        with:
+          name: ssh-key
+          path: ~/.ssh/
+
+      - name: Fix SSH Key permissions
+        run: chmod 400 ~/.ssh/kafka-key.pem
+
+      - name: Install Ansible
+        run: |
+          sudo apt update
+          sudo apt install -y ansible
+
+      - name: Generate Ansible Inventory
+        working-directory: ./ansible
+        run: |
+          cat > inventory.ini <<EOF
+          [zookeeper]
+          zk1 ansible_host=${{ needs.deploy-infrastructure.outputs.zk_public_ip }} ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/kafka-key.pem
+
+          [kafka]
+          broker1 ansible_host=${{ needs.deploy-infrastructure.outputs.kafka_public_ip }} ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/kafka-key.pem
+
+          [all:vars]
+          ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+          zookeeper_private_ip=${{ needs.deploy-infrastructure.outputs.zk_private_ip }}
+          kafka_private_ip=${{ needs.deploy-infrastructure.outputs.kafka_private_ip }}
+          EOF
+
+      - name: Deploy Kafka
+        working-directory: ./ansible
+        run: ansible-playbook -i inventory.ini install_kafka.yml
+
+      - name: Display Cluster Info
+        run: |
+          echo "✅ Kafka Cluster déployé avec succès !"
+          echo "📍 ZooKeeper: ${{ needs.deploy-infrastructure.outputs.zk_public_ip }}"
+          echo "📍 Kafka Broker: ${{ needs.deploy-infrastructure.outputs.kafka_public_ip }}"
