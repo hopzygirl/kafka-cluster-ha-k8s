@@ -70,7 +70,7 @@ jobs:
           chmod 400 ~/.ssh/kafka-key.pem
 
       - name: Upload SSH Key
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ssh-key
           path: ~/.ssh/kafka-key.pem
